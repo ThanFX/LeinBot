@@ -1,0 +1,8 @@
+.idea
+prop.json
+LeinBot*
+!leinbot.go
+
+/.env
+.env
+vendor/
