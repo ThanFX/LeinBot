@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -58,7 +60,7 @@ func main() {
 	errCheck("Error opening connection to Discord\n", err)
 	defer discord.Close()
 
-	commandPrefix = "!"
+	commandPrefix = "!lottery"
 
 	// SUPER hacky way of making our main function sit and wait forever while not using any CPU
 	<-make(chan struct{})
@@ -102,10 +104,62 @@ func recieveMessage(discord *discordgo.Session, message *discordgo.MessageCreate
 		go StartCommand(discord, message)
 	}
 
-	fmt.Printf("Message: \"%+v\" from: %s\n", message.Message, message.Author)
+	fmt.Printf("Message: \"%+v\" from: %s\n", message.Content, message.Author.Username)
 }
 
 func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
+	text := strings.Fields(m.Content)
+	var botMessage string
+	if len(text) > 1 {
+		switch text[1] {
+		// Перечень списков розыгрышей
+		case "list":
+			botMessage = listLottery()
+		// Создать новый список розыгрыша
+		case "create":
+		// Удалить существующий список розыгрышей
+		case "delete":
+		// Показать список участников розыгрыша
+		case "show":
+		// Добавить участника в список розыгрыша
+		case "add":
+		// Удалить участника из списка розыгрыша
+		case "remove":
+		// Текущие данные по розыгрышу
+		case "status":
+		// Установка параметров розыгрыша
+		case "params":
+		// Старт розыгрыша
+		case "start":
+		// Справка по командам бота
+		case "help":
+			botMessage = "Справка по командам бота:\n\n" +
+				"**list**\nПеречень списков розыгрышей\n" +
+				"**create**\nСоздать новый список розыгрыша\n" +
+				"**delete**\nУдалить существующий список розыгрышей\n" +
+				"**show**\nПоказать список участников розыгрыша\n" +
+				"**add**\nДобавить участника в список розыгрыша\n" +
+				"**remove**\nУдалить участника из списка розыгрыша\n" +
+				"**status**\nУстановка параметров розыгрыша\n" +
+				"**params**\nУстановка параметров розыгрыша\n" +
+				"**start**\nСтарт розыгрыша\n" +
+				"**help**\nСправка по командам бота\n"
+		}
+		if botMessage != "" {
+			dg.ChannelMessageSend(m.ChannelID, botMessage)
+		}
+	} else {
+		dg.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Hello, %s!", m.Author.Username))
+	}
+}
 
-	dg.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Hello, %s!"))
+func listLottery() string {
+	files, err := filepath.Glob("lottery-*.csv")
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return ""
+	}
+	text := "Найдено розыгрышей: " + strconv.Itoa(len(files)) + "\n"
+	text += strings.Join(files, "\n")
+	return text
 }
