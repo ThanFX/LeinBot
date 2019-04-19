@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -112,7 +116,7 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 	var botMessage string
 	if len(text) > 1 {
 		switch text[1] {
-		// Перечень списков розыгрышей
+		// Перечень списков розыгрышей - Done!
 		case "list":
 			botMessage = listLottery()
 		// Создать новый список розыгрыша
@@ -127,11 +131,15 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 		case "remove":
 		// Текущие данные по розыгрышу
 		case "status":
+			botMessage = statusLottery(m)
 		// Установка параметров розыгрыша
 		case "params":
+		// Проверка списка участников розыгрыша - Done!
+		case "check":
+			botMessage = checkLottery(dg, m)
 		// Старт розыгрыша
 		case "start":
-		// Справка по командам бота
+		// Справка по командам бота - Done!
 		case "help":
 			botMessage = "Справка по командам бота:\n\n" +
 				"**list**\nПеречень списков розыгрышей\n" +
@@ -140,8 +148,9 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 				"**show**\nПоказать список участников розыгрыша\n" +
 				"**add**\nДобавить участника в список розыгрыша\n" +
 				"**remove**\nУдалить участника из списка розыгрыша\n" +
-				"**status**\nУстановка параметров розыгрыша\n" +
+				"**status**\nТекущие данные по розыгрышу\n" +
 				"**params**\nУстановка параметров розыгрыша\n" +
+				"**check**\nПроверка списка участников розыгрыша\n" +
 				"**start**\nСтарт розыгрыша\n" +
 				"**help**\nСправка по командам бота\n"
 		}
@@ -159,7 +168,86 @@ func listLottery() string {
 		log.Print("Произошла ошибка: %s", err)
 		return ""
 	}
-	text := "Найдено розыгрышей: " + strconv.Itoa(len(files)) + "\n"
+	text := "Найдены следующие списки розыгрышей: " + strconv.Itoa(len(files)) + "\n"
 	text += strings.Join(files, "\n")
 	return text
+}
+
+func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
+	// Получили список первых 1000 участников гильдии
+	members, err := dg.GuildMembers(m.GuildID, "", 1000)
+	errCheck("Ошибка при получении списка участников гильдии: ", err)
+	var memberNicks []string
+	for i := range members {
+		if !members[i].User.Bot {
+			if members[i].Nick != "" {
+				memberNicks = append(memberNicks, members[i].Nick)
+			} else {
+				memberNicks = append(memberNicks, members[i].User.Username)
+			}
+		}
+	}
+
+	// Получаем список участников лотереи по именам из переданного названия файла
+	loteryName := strings.Fields(m.Content)[2]
+	file, err := filepath.Glob(loteryName + ".csv")
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return ""
+	}
+	if len(file) == 0 {
+		return "Лотерея с названием *" + loteryName + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
+	}
+	csvFile, _ := os.Open(loteryName + ".csv")
+	reader := csv.NewReader(bufio.NewReader(csvFile))
+	var persons []string
+	for {
+		line, error := reader.Read()
+		if error == io.EOF {
+			break
+		} else if error != nil {
+			log.Fatal(error)
+		}
+		persons = append(persons, line[0])
+	}
+	csvFile.Close()
+
+	//fmt.Println(persons)
+	//fmt.Println(memberNicks)
+
+	var isFind bool
+	var str string
+	for p := range persons {
+		isFind = false
+		for k := range memberNicks {
+			if strings.HasPrefix(memberNicks[k], persons[p]) {
+				// fmt.Printf("Найдено сопоставление %s - %s\n", persons[p], memberNicks[k])
+				// str += "Найдено сопоставление участник розыгрыша - гильдиец: " + persons[p] + " - " + "memberNicks[k]" + "\n"
+				isFind = true
+				continue
+			}
+		}
+		if !isFind {
+			str += "Участник *" + persons[p] + "* не найден среди членов гильдии\n"
+		}
+	}
+
+	//fmt.Printf("Участник: %s\n", members[0].Nick)
+	if str == "" {
+		str = "Все участники розыгрыша найдены среди гильдийцев\n"
+	}
+	return str
+}
+
+func statusLottery(m *discordgo.MessageCreate) string {
+	loteryName := strings.Fields(m.Content)[2]
+	file, err := filepath.Glob(loteryName + ".csv")
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return ""
+	}
+	if len(file) == 0 {
+		return "Лотерея с названием *" + loteryName + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
+	}
+	
 }
