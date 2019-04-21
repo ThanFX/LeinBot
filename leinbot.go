@@ -249,5 +249,5 @@ func statusLottery(m *discordgo.MessageCreate) string {
 	if len(file) == 0 {
 		return "Лотерея с названием *" + loteryName + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
 	}
-	
+	return ""
 }
