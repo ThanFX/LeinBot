@@ -24,10 +24,30 @@ type Keys struct {
 	Channels []string `json: "channels"`
 }
 
+type LotteryType int
+
+const (
+	TournamentLottery LotteryType = 0 // Тип розыгрыша - по местам
+	DrawLottery       LotteryType = 1 // Тип розыгрыша - по количеству билетов у участника
+)
+
+type Tournament struct {
+	Point   int    // Место
+	Members int    // Количество победителей на этом месте
+	Prize   string // Приз
+}
+
+type Lottery struct {
+	Type        LotteryType
+	Tournaments []Tournament
+}
+
 var (
 	commandPrefix string
+	filePrefix    string
 	botID         string
 	keys          Keys
+	lotteries     []Lottery
 )
 
 func errCheck(msg string, err error) {
@@ -65,6 +85,7 @@ func main() {
 	defer discord.Close()
 
 	commandPrefix = "!lottery"
+	filePrefix = "lottery"
 
 	// SUPER hacky way of making our main function sit and wait forever while not using any CPU
 	<-make(chan struct{})
@@ -134,6 +155,7 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 			botMessage = statusLottery(m)
 		// Установка параметров розыгрыша
 		case "params":
+			botMessage = paramsLottery(m)
 		// Проверка списка участников розыгрыша - Done!
 		case "check":
 			botMessage = checkLottery(dg, m)
@@ -149,7 +171,9 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 				"**add**\nДобавить участника в список розыгрыша\n" +
 				"**remove**\nУдалить участника из списка розыгрыша\n" +
 				"**status**\nТекущие данные по розыгрышу\n" +
-				"**params**\nУстановка параметров розыгрыша\n" +
+				"**params**\nУстановка параметров розыгрыша. Шаблон параметров: " +
+				"!lottery params \"номер лотереи\"|\"выигрышное место\"|" +
+				"\"количество победителей\"|\"получаемый приз\"\n" +
 				"**check**\nПроверка списка участников розыгрыша\n" +
 				"**start**\nСтарт розыгрыша\n" +
 				"**help**\nСправка по командам бота\n"
@@ -163,7 +187,7 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func listLottery() string {
-	files, err := filepath.Glob("lottery-*.csv")
+	files, err := filepath.Glob(filePrefix + "-*.csv")
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
 		return ""
@@ -171,6 +195,21 @@ func listLottery() string {
 	text := "Найдены следующие списки розыгрышей: " + strconv.Itoa(len(files)) + "\n"
 	text += strings.Join(files, "\n")
 	return text
+}
+
+func getFileLotteryName(number string) string {
+	return filePrefix + "-" + number + ".csv"
+}
+
+func findLottery(lotteryNumber string) (string, error) {
+	file, err := filepath.Glob(getFileLotteryName(lotteryNumber))
+	if err != nil {
+		return "", err
+	}
+	if len(file) == 0 {
+		return "Лотерея с номером *" + lotteryNumber + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n", nil
+	}
+	return getFileLotteryName(lotteryNumber), nil
 }
 
 func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
@@ -189,15 +228,12 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	}
 
 	// Получаем список участников лотереи по именам из переданного названия файла
-	loteryName := strings.Fields(m.Content)[2]
-	file, err := filepath.Glob(loteryName + ".csv")
+	loteryName, err := findLottery(strings.Fields(m.Content)[2])
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
 		return ""
 	}
-	if len(file) == 0 {
-		return "Лотерея с названием *" + loteryName + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
-	}
+
 	csvFile, _ := os.Open(loteryName + ".csv")
 	reader := csv.NewReader(bufio.NewReader(csvFile))
 	var persons []string
@@ -240,14 +276,27 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 }
 
 func statusLottery(m *discordgo.MessageCreate) string {
-	loteryName := strings.Fields(m.Content)[2]
-	file, err := filepath.Glob(loteryName + ".csv")
+	loteryName, err := findLottery(strings.Fields(m.Content)[2])
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
-		return ""
+		return "Ошибка поиска списка участников\n"
 	}
-	if len(file) == 0 {
-		return "Лотерея с названием *" + loteryName + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
+	return loteryName
+}
+
+func paramsLottery(m *discordgo.MessageCreate) string {
+	var lottery Lottery
+	params := strings.Fields(m.Content)
+	loteryName, err := findLottery(params[2])
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return "Ошибка поиска списка участников\n"
 	}
-	return ""
+	switch params[3] { // смотрим на тип задаваемой лотереи
+	case "tournament":
+		lottery.Type = TournamentLottery
+	case "draw":
+		lottery.Type = DrawLottery
+	}
+	return loteryName
 }
