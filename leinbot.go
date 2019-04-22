@@ -32,14 +32,13 @@ const (
 )
 
 type Tournament struct {
-	Point   int    // Место
-	Members int    // Количество победителей на этом месте
+	Members int64  // Количество победителей на этом месте
 	Prize   string // Приз
 }
 
 type Lottery struct {
 	Type        LotteryType
-	Tournaments []Tournament
+	Tournaments map[int64]Tournament
 }
 
 var (
@@ -47,7 +46,7 @@ var (
 	filePrefix    string
 	botID         string
 	keys          Keys
-	lotteries     []Lottery
+	lotteries     map[int64]Lottery
 )
 
 func errCheck(msg string, err error) {
@@ -58,6 +57,8 @@ func errCheck(msg string, err error) {
 }
 
 func main() {
+	lotteries = make(map[int64]Lottery)
+
 	fmt.Println("Hello, I'm LeiNBot!!")
 	bs, err := ioutil.ReadFile("prop.json")
 	errCheck("Ошибка открытия файла параметров", err)
@@ -127,9 +128,11 @@ func recieveMessage(discord *discordgo.Session, message *discordgo.MessageCreate
 
 	if strings.HasPrefix(message.Content, commandPrefix) {
 		go StartCommand(discord, message)
+	} else if message.Content == "тупой бот" {
+		discord.ChannelMessageSend(message.ChannelID, "сам такой :P\n")
 	}
 
-	fmt.Printf("Message: \"%+v\" from: %s\n", message.Content, message.Author.Username)
+	//fmt.Printf("Message: \"%+v\" from: %s\n", message.Content, message.Author.Username)
 }
 
 func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
@@ -170,10 +173,11 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 				"**show**\nПоказать список участников розыгрыша\n" +
 				"**add**\nДобавить участника в список розыгрыша\n" +
 				"**remove**\nУдалить участника из списка розыгрыша\n" +
-				"**status**\nТекущие данные по розыгрышу\n" +
+				"**status**\nТекущие данные по розыгрышу\n\n" +
 				"**params**\nУстановка параметров розыгрыша. Шаблон параметров: " +
-				"!lottery params \"номер лотереи\"|\"выигрышное место\"|" +
-				"\"количество победителей\"|\"получаемый приз\"\n" +
+				"!lottery params \"номер лотереи\" \"тип лотереи\" \"выигрышное место\"|" +
+				"\"количество победителей\"|\"получаемый приз\". Например !lottery params 1 tournament 3|5|50к золота\n" +
+				"Для лотереи №1 установить тип \"турнир (по призовым местам)\" и задать для 3-го места 5 победителей, каждый получит по 50к золота\n\n" +
 				"**check**\nПроверка списка участников розыгрыша\n" +
 				"**start**\nСтарт розыгрыша\n" +
 				"**help**\nСправка по командам бота\n"
@@ -182,7 +186,7 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 			dg.ChannelMessageSend(m.ChannelID, botMessage)
 		}
 	} else {
-		dg.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Hello, %s!", m.Author.Username))
+		//dg.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Hello, %s!", m.Author.Username))
 	}
 }
 
@@ -226,15 +230,17 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 			}
 		}
 	}
+	fmt.Println(1)
 
 	// Получаем список участников лотереи по именам из переданного названия файла
-	loteryName, err := findLottery(strings.Fields(m.Content)[2])
+	_, err = findLottery(strings.Fields(m.Content)[2])
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
-		return ""
+		return "Ошибочно указан номер лотереи\n"
 	}
 
-	csvFile, _ := os.Open(loteryName + ".csv")
+	csvFile, err := os.Open(getFileLotteryName(strings.Fields(m.Content)[2]))
+	errCheck("Ошибка открытия файла со списком участников гильдии: ", err)
 	reader := csv.NewReader(bufio.NewReader(csvFile))
 	var persons []string
 	for {
@@ -276,27 +282,98 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 }
 
 func statusLottery(m *discordgo.MessageCreate) string {
-	loteryName, err := findLottery(strings.Fields(m.Content)[2])
+	fields := strings.Fields(m.Content)
+	if len(fields) != 3 {
+		return "Ошибка команды, наберите **!lottery help** для вызова справки"
+	}
+	num := strings.Fields(m.Content)[2]
+	_, err := findLottery(num)
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
 		return "Ошибка поиска списка участников\n"
 	}
-	return loteryName
+	lotNum, err := strconv.ParseInt(num, 10, 64)
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return "Ошибочно указан номер лотереи\n"
+	}
+
+	s := "Параметры лотереи №**" + strconv.Itoa(int(lotNum)) + "** не заданы\n"
+	for k, v := range lotteries {
+		// Ищем выбранную лотерею
+		if k == lotNum {
+			s = "Текущий статус лотереи №**" + strconv.Itoa(int(k)) + "**:\n"
+			switch v.Type {
+			case 0:
+				s += "Тип лотереи: выигрышные места\n"
+			case 1:
+				s += "Тип лотереи: розыгрыш билетов\n"
+			}
+			for i, pos := range v.Tournaments {
+				s += "Победителей с местом №**" + strconv.Itoa(int(i)) + "** - **" + strconv.Itoa(int(pos.Members)) +
+					"**, приз - **" + pos.Prize + "**\n"
+			}
+		}
+	}
+	return s
 }
 
+// !lottery params 1 tournament 3|5|50к золота
 func paramsLottery(m *discordgo.MessageCreate) string {
 	var lottery Lottery
-	params := strings.Fields(m.Content)
-	loteryName, err := findLottery(params[2])
+	lottery.Tournaments = make(map[int64]Tournament)
+	var tour Tournament
+	data := strings.Fields(m.Content)
+	_, err := findLottery(data[2])
 	if err != nil {
 		log.Print("Произошла ошибка: %s", err)
 		return "Ошибка поиска списка участников\n"
 	}
-	switch params[3] { // смотрим на тип задаваемой лотереи
+	lotNum, err := strconv.ParseInt(data[2], 10, 64)
+	if err != nil {
+		log.Print("Произошла ошибка: %s", err)
+		return "Ошибочно указан номер лотереи\n"
+	}
+	// Ищем, есть ли уже параметры для этой лотереи
+	for k, v := range lotteries {
+		if k == lotNum {
+			lottery = v
+			break
+		}
+	}
+
+	// Собираем в одну строку все параметры места (в описании выигрыша могут быть пробелы которые рассплитило ранее)
+	lotteryParam := strings.Join(data[4:], " ")
+	// И теперь сплитим их по другому разделителю
+	params := strings.Split(lotteryParam, "|")
+
+	lotteryType := data[3]
+	switch lotteryType { // смотрим на тип задаваемой лотереи
 	case "tournament":
 		lottery.Type = TournamentLottery
+		num, err := strconv.ParseInt(params[1], 10, 64)
+		if err != nil {
+			log.Print("Произошла ошибка: %s", err)
+			return "Ошибочно указано количество участников\n"
+		}
+		tour.Members = num
+		tour.Prize = params[2]
+		num, err = strconv.ParseInt(params[0], 10, 64)
+		if err != nil {
+			log.Print("Произошла ошибка: %s", err)
+			return "Ошибочно указано призовое место\n"
+		}
+		lottery.Tournaments[num] = tour
+		num, err = strconv.ParseInt(data[2], 10, 64)
+		if err != nil {
+			log.Print("Произошла ошибка: %s", err)
+			return "Ошибочно указан номер лотереи\n"
+		}
+		lotteries[num] = lottery
 	case "draw":
 		lottery.Type = DrawLottery
+		return "Лотерея этого типа пока недоступна\n"
 	}
-	return loteryName
+	//fmt.Printf("%+v\n", lotteries)
+	return "Для лотереи №" + data[2] + " успешно заданы параметры розыгрыша\n"
 }
