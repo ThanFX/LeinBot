@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -153,10 +154,10 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 		case "add":
 		// Удалить участника из списка розыгрыша
 		case "remove":
-		// Текущие данные по розыгрышу
+		// Текущие данные по розыгрышу - Done!
 		case "status":
 			botMessage = statusLottery(m)
-		// Установка параметров розыгрыша
+		// Установка параметров розыгрыша - Done!
 		case "params":
 			botMessage = paramsLottery(m)
 		// Проверка списка участников розыгрыша - Done!
@@ -167,18 +168,22 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 		// Справка по командам бота - Done!
 		case "help":
 			botMessage = "Справка по командам бота:\n\n" +
-				"**list**\nПеречень списков розыгрышей\n" +
+				"**list**\nПеречень списков розыгрышей\n\n" +
 				"**create**\nСоздать новый список розыгрыша\n" +
 				"**delete**\nУдалить существующий список розыгрышей\n" +
 				"**show**\nПоказать список участников розыгрыша\n" +
 				"**add**\nДобавить участника в список розыгрыша\n" +
-				"**remove**\nУдалить участника из списка розыгрыша\n" +
-				"**status**\nТекущие данные по розыгрышу\n\n" +
+				"**remove**\nУдалить участника из списка розыгрыша\n\n" +
+
+				"**status**\nТекущие данные по розыгрышу. Шаблон параметров: !lottery status \"номер лотереи\". Например !lottery status 1\n\n" +
+
 				"**params**\nУстановка параметров розыгрыша. Шаблон параметров: " +
 				"!lottery params \"номер лотереи\" \"тип лотереи\" \"выигрышное место\"|" +
 				"\"количество победителей\"|\"получаемый приз\". Например !lottery params 1 tournament 3|5|50к золота\n" +
 				"Для лотереи №1 установить тип \"турнир (по призовым местам)\" и задать для 3-го места 5 победителей, каждый получит по 50к золота\n\n" +
-				"**check**\nПроверка списка участников розыгрыша\n" +
+
+				"**check**\nПроверка списка участников розыгрыша. Шаблон параметров: !lottery check \"номер лотереи\". Например !lottery check 1\n\n" +
+
 				"**start**\nСтарт розыгрыша\n" +
 				"**help**\nСправка по командам бота\n"
 		}
@@ -196,7 +201,7 @@ func listLottery() string {
 		log.Print("Произошла ошибка: %s", err)
 		return ""
 	}
-	text := "Найдены следующие списки розыгрышей: " + strconv.Itoa(len(files)) + "\n"
+	text := "Найдено розыгрышей: " + strconv.Itoa(len(files)) + "\n"
 	text += strings.Join(files, "\n")
 	return text
 }
@@ -210,8 +215,9 @@ func findLottery(lotteryNumber string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fmt.Printf("%+v", len(file))
 	if len(file) == 0 {
-		return "Лотерея с номером *" + lotteryNumber + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n", nil
+		return "", errors.New("Файл не найден\n")
 	}
 	return getFileLotteryName(lotteryNumber), nil
 }
@@ -230,17 +236,19 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 			}
 		}
 	}
-	fmt.Println(1)
 
 	// Получаем список участников лотереи по именам из переданного названия файла
-	_, err = findLottery(strings.Fields(m.Content)[2])
+	lotteryNumber := strings.Fields(m.Content)[2]
+	fileName, err := findLottery(lotteryNumber)
 	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибочно указан номер лотереи\n"
+		log.Printf("Произошла ошибка: %s", err)
+		return "Лотерея с номером *" + lotteryNumber + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
 	}
 
-	csvFile, err := os.Open(getFileLotteryName(strings.Fields(m.Content)[2]))
-	errCheck("Ошибка открытия файла со списком участников гильдии: ", err)
+	csvFile, err := os.Open(fileName)
+	if err != nil {
+		return "Ошибка открытия файла со списком участников гильдии\n"
+	}
 	reader := csv.NewReader(bufio.NewReader(csvFile))
 	var persons []string
 	for {
@@ -259,6 +267,7 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 
 	var isFind bool
 	var str string
+	var count int
 	for p := range persons {
 		isFind = false
 		for k := range memberNicks {
@@ -266,6 +275,7 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 				// fmt.Printf("Найдено сопоставление %s - %s\n", persons[p], memberNicks[k])
 				// str += "Найдено сопоставление участник розыгрыша - гильдиец: " + persons[p] + " - " + "memberNicks[k]" + "\n"
 				isFind = true
+				count++
 				continue
 			}
 		}
@@ -278,6 +288,7 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	if str == "" {
 		str = "Все участники розыгрыша найдены среди гильдийцев\n"
 	}
+	str += "Всего в лотерее принимают участие: **" + strconv.Itoa(count) + "**\n"
 	return str
 }
 
@@ -374,6 +385,6 @@ func paramsLottery(m *discordgo.MessageCreate) string {
 		lottery.Type = DrawLottery
 		return "Лотерея этого типа пока недоступна\n"
 	}
-	//fmt.Printf("%+v\n", lotteries)
+	fmt.Printf("%+v\n", lotteries)
 	return "Для лотереи №" + data[2] + " успешно заданы параметры розыгрыша\n"
 }
