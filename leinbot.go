@@ -9,11 +9,13 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -23,6 +25,11 @@ type Keys struct {
 	Admins   []string `json: "admins"`
 	Guilds   []string `json: "guilds"`
 	Channels []string `json: "channels"`
+}
+
+type DgNick struct {
+	Nick   string
+	DgUser *discordgo.Member
 }
 
 type LotteryType int
@@ -422,19 +429,6 @@ func paramsLottery(m *discordgo.MessageCreate) string {
 }
 
 func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
-	// Получили список первых 1000 участников гильдии
-	members, err := dg.GuildMembers(m.GuildID, "", 1000)
-	errCheck("Ошибка при получении списка участников гильдии: ", err)
-	var memberNicks []string
-	for i := range members {
-		if !members[i].User.Bot {
-			if members[i].Nick != "" {
-				memberNicks = append(memberNicks, members[i].Nick)
-			} else {
-				memberNicks = append(memberNicks, members[i].User.Username)
-			}
-		}
-	}
 
 	// Получаем список участников лотереи по именам из переданного названия файла
 	data := strings.Fields(strings.TrimSpace(m.Content))
@@ -469,5 +463,36 @@ func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 		persons = append(persons, line[0])
 	}
 	csvFile.Close()
+
+	members, err := dg.GuildMembers(m.GuildID, "", 1000)
+	errCheck("Ошибка при получении списка участников гильдии: ", err)
+	var memberNicks []DgNick
+	nick := DgNick{}
+	for i := range members {
+		if !members[i].User.Bot {
+			if members[i].Nick != "" {
+				nick.Nick = members[i].Nick
+			} else {
+				nick.Nick = members[i].User.Username
+			}
+			nick.DgUser = members[i]
+			memberNicks = append(memberNicks, nick)
+		}
+	}
+
+	rand.Seed(time.Now().UTC().UnixNano())
+	maxTour := len(lotteries[lotNum].Tournaments)
+	var curTour = maxTour
+	var winners []string
+	for curTour > 0 {
+		maxWin := lotteries[lotNum].Tournaments[curTour].Members
+		curWin := maxWin
+		for curWin > 0 {
+
+			curWin--
+		}
+		curTour--
+	}
+
 	return ""
 }
