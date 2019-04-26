@@ -177,11 +177,11 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 		case "help":
 			botMessage = "Справка по командам бота:\n\n" +
 				"**list**\nПеречень списков розыгрышей\n\n" +
-				"**create**\nСоздать новый список розыгрыша\n" +
-				"**delete**\nУдалить существующий список розыгрышей\n" +
-				"**show**\nПоказать список участников розыгрыша\n" +
-				"**add**\nДобавить участника в список розыгрыша\n" +
-				"**remove**\nУдалить участника из списка розыгрыша\n\n" +
+				//"**create**\nСоздать новый список розыгрыша\n" +
+				//"**delete**\nУдалить существующий список розыгрышей\n" +
+				//"**show**\nПоказать список участников розыгрыша\n" +
+				//"**add**\nДобавить участника в список розыгрыша\n" +
+				//"**remove**\nУдалить участника из списка розыгрыша\n\n" +
 
 				"**status**\nТекущие данные по розыгрышу. Шаблон параметров: !lottery status \"номер лотереи\". Например !lottery status 1\n\n" +
 
@@ -190,9 +190,9 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 				"\"количество победителей\"|\"получаемый приз\". Например !lottery params 1 tournament 3|5|50к золота\n" +
 				"Для лотереи №1 установить тип \"турнир (по призовым местам)\" и задать для 3-го места 5 победителей, каждый получит по 50к золота\n\n" +
 
-				"**check**\nПроверка списка участников розыгрыша. Шаблон параметров: !lottery check \"номер лотереи\". Например !lottery check 1\n\n" +
+				"**check**\nПроверка параметров розыгрыша. Шаблон параметров: !lottery check \"номер лотереи\". Например !lottery check 1\n\n" +
 
-				"**start**\nСтарт розыгрыша\n" +
+				"**start**\nСтарт розыгрыша. Шаблон параметров: !lottery start \"номер лотереи\". Например !lottery start 1\n\n" +
 				"**help**\nСправка по командам бота\n"
 		}
 		if botMessage != "" {
@@ -327,7 +327,7 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	str += statusLottery(m)
 	str += "Всего в лотерее призовых мест: **" + strconv.Itoa(int(countPrizeMembers)) + "**\n"
 	if int(countPrizeMembers) > count {
-		str += "\n**Внимание! Количество призовых мест превышает количество участников!!\n"
+		str += "\n**Внимание! Количество призовых мест превышает количество участников!!**\n"
 	}
 	return str
 }
@@ -481,18 +481,33 @@ func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	}
 
 	rand.Seed(time.Now().UTC().UnixNano())
-	maxTour := len(lotteries[lotNum].Tournaments)
+	maxTour := int64(len(lotteries[lotNum].Tournaments))
 	var curTour = maxTour
 	var winners []string
+	var s string
+	//fmt.Println(maxTour)
 	for curTour > 0 {
 		maxWin := lotteries[lotNum].Tournaments[curTour].Members
 		curWin := maxWin
 		for curWin > 0 {
-
+			winnerNum := rand.Intn(len(persons))
+			winners = append(winners, persons[winnerNum])
+			persons = append(persons[:winnerNum], persons[winnerNum+1:]...)
+			//fmt.Printf("Место - %d, победитель №%d\n", curTour, curWin)
+			//s += "Победил " + winners[len(winners)-1] + "\n"
 			curWin--
 		}
 		curTour--
 	}
 
-	return ""
+	for i := range winners {
+		for _, v := range memberNicks {
+			if strings.HasPrefix(v.Nick, winners[i]) {
+				s += "Победил " + v.DgUser.Mention() + "\n"
+			}
+		}
+	}
+	return s
 }
+
+// !lottery params 1 tournament 1|5|50к золота
