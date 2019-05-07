@@ -225,6 +225,7 @@ func StartCommand(dg *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 
+// Возвращаем список всех найденных по префиксу файлов лотереи
 func listLottery() string {
 	files, err := filepath.Glob(filePrefix + "-*.csv")
 	if err != nil {
@@ -236,11 +237,13 @@ func listLottery() string {
 	return text
 }
 
+// Возвращаем название файла лотерии по номеру и префиксу
 func getFileLotteryName(number string) string {
 	return filePrefix + "-" + number + ".csv"
 }
 
-func findLottery(lotteryNumber string) (string, error) {
+// Проверяем наличие файла лотереи с указанным номером и возвращаем название файла, если такой файл нашёлся
+func findLotteryFile(lotteryNumber string) (string, error) {
 	file, err := filepath.Glob(getFileLotteryName(lotteryNumber))
 	if err != nil {
 		return "", err
@@ -252,42 +255,62 @@ func findLottery(lotteryNumber string) (string, error) {
 	return getFileLotteryName(lotteryNumber), nil
 }
 
-func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
-	// Получили список первых 1000 участников гильдии
-	members, err := dg.GuildMembers(m.GuildID, "", 1000)
-	errCheck("Ошибка при получении списка участников гильдии: ", err)
-	var memberNicks []string
+// Проверяем корректность переданного в параметрах номера лотереи
+func getLotteryNumber(st string) (int64, error) {
+	data := strings.Fields(strings.TrimSpace(st))
+	if len(data) < 3 {
+		return 0, errors.New("Не указан номер лотереи\n")
+	}
+	lotteryNumber := strings.Fields(strings.TrimSpace(st))[2]
+	lotNum, err := strconv.ParseInt(lotteryNumber, 10, 64)
+	if err != nil {
+		return 0, errors.New("Ошибочно указан номер лотереи\n")
+	}
+	return lotNum, nil
+}
+
+// Проверяем корректность переданного в параметрах номера лотереи, наличие файла с соответствующим именем и возвращаем название файла, если всё корректно
+func getLotteryFile(st string) (string, error) {
+	num, err := getLotteryNumber(st)
+	if err != nil {
+		return "", err
+	}
+	fileName, err := findLotteryFile(strconv.FormatInt(num, 10))
+	if err != nil {
+		return "", errors.New("Лотерея с номером *" + strconv.FormatInt(num, 10) + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n")
+	}
+	return fileName, nil
+}
+
+// Возвращаем массив структур первых 1000 участников гильдии
+func getDGUsers(dg *discordgo.Session, guildID string) ([]DgNick, error) {
+	var memberNicks []DgNick
+	members, err := dg.GuildMembers(guildID, "", 1000)
+	if err != nil {
+		return nil, errors.New("Ошибка при получении списка участников гильдии: " + err.Error() + "\n")
+	}
+	nick := DgNick{}
 	for i := range members {
 		if !members[i].User.Bot {
 			if members[i].Nick != "" {
-				memberNicks = append(memberNicks, members[i].Nick)
+				nick.Nick = members[i].Nick
 			} else {
-				memberNicks = append(memberNicks, members[i].User.Username)
+				nick.Nick = members[i].User.Username
 			}
+			nick.DgUser = members[i]
+			memberNicks = append(memberNicks, nick)
 		}
 	}
+	return memberNicks, nil
+}
 
-	// Получаем список участников лотереи по именам из переданного названия файла
-	data := strings.Fields(strings.TrimSpace(m.Content))
-	if len(data) < 3 {
-		return "Не указан номер лотереи\n"
-	}
-	lotteryNumber := strings.Fields(strings.TrimSpace(m.Content))[2]
-	lotNum, err := strconv.ParseInt(lotteryNumber, 10, 64)
-	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибочно указан номер лотереи\n"
-	}
-	fileName, err := findLottery(lotteryNumber)
-	if err != nil {
-		log.Printf("Произошла ошибка: %s", err)
-		return "Лотерея с номером *" + lotteryNumber + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
-	}
-
+// Возвращаем список ников участников лотереи из файла с номером лотереи
+func getLotteryPersonsFromFile(fileName string) ([]string, error) {
 	csvFile, err := os.Open(fileName)
 	if err != nil {
-		return "Ошибка открытия файла со списком участников гильдии\n"
+		return nil, errors.New("Ошибка открытия файла со списком участников гильдии\n")
 	}
+	defer csvFile.Close()
 	reader := csv.NewReader(bufio.NewReader(csvFile))
 	var persons []string
 	for {
@@ -299,10 +322,52 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 		}
 		persons = append(persons, line[0])
 	}
-	csvFile.Close()
+	return persons, nil
+}
 
-	//fmt.Println(persons)
-	//fmt.Println(memberNicks)
+// Возвращаем параметры лотереи (тип, места, количество победителей и приз для каждого места)
+func statusLottery(m *discordgo.MessageCreate) string {
+	lotNum, err := getLotteryNumber(m.Content)
+	if err != nil {
+		return err.Error()
+	}
+
+	s := "Параметры лотереи №**" + strconv.Itoa(int(lotNum)) + "** не заданы\n"
+	for k, v := range lotteries {
+		// Ищем выбранную лотерею
+		if k == lotNum {
+			s = "Текущий статус лотереи №**" + strconv.Itoa(int(k)) + "**:\n"
+			switch v.Type {
+			case 0:
+				s += "Тип лотереи: выигрышные места\n"
+			case 1:
+				s += "Тип лотереи: розыгрыш билетов\n"
+			}
+			for i, pos := range v.Tournaments {
+				s += "Победителей с местом №**" + strconv.Itoa(int(i)) + "** - **" + strconv.Itoa(int(pos.Members)) +
+					"**, приз - **" + pos.Prize + "**\n"
+			}
+		}
+	}
+	return s
+}
+
+func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
+	memberNicks, err := getDGUsers(dg, m.GuildID)
+	if err != nil {
+		return err.Error()
+	}
+
+	// Получаем список участников лотереи по именам из переданного названия файла
+	fileName, err := getLotteryFile(m.Content)
+	if err != nil {
+		return err.Error()
+	}
+	lotNum, _ := getLotteryNumber(m.Content)
+	persons, err := getLotteryPersonsFromFile(fileName)
+	if err != nil {
+		return err.Error()
+	}
 
 	var isFind bool
 	var str string
@@ -310,7 +375,7 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	for p := range persons {
 		isFind = false
 		for k := range memberNicks {
-			if strings.HasPrefix(memberNicks[k], persons[p]) {
+			if strings.HasPrefix(memberNicks[k].Nick, persons[p]) {
 				// fmt.Printf("Найдено сопоставление %s - %s\n", persons[p], memberNicks[k])
 				// str += "Найдено сопоставление участник розыгрыша - гильдиец: " + persons[p] + " - " + "memberNicks[k]" + "\n"
 				isFind = true
@@ -357,57 +422,14 @@ func checkLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 	return str
 }
 
-func statusLottery(m *discordgo.MessageCreate) string {
-	fields := strings.Fields(strings.TrimSpace(m.Content))
-	if len(fields) != 3 {
-		return "Ошибка команды, наберите **!lottery help** для вызова справки"
-	}
-	num := strings.Fields(strings.TrimSpace(m.Content))[2]
-	_, err := findLottery(num)
-	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибка поиска списка участников\n"
-	}
-	lotNum, err := strconv.ParseInt(num, 10, 64)
-	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибочно указан номер лотереи\n"
-	}
-
-	s := "Параметры лотереи №**" + strconv.Itoa(int(lotNum)) + "** не заданы\n"
-	for k, v := range lotteries {
-		// Ищем выбранную лотерею
-		if k == lotNum {
-			s = "Текущий статус лотереи №**" + strconv.Itoa(int(k)) + "**:\n"
-			switch v.Type {
-			case 0:
-				s += "Тип лотереи: выигрышные места\n"
-			case 1:
-				s += "Тип лотереи: розыгрыш билетов\n"
-			}
-			for i, pos := range v.Tournaments {
-				s += "Победителей с местом №**" + strconv.Itoa(int(i)) + "** - **" + strconv.Itoa(int(pos.Members)) +
-					"**, приз - **" + pos.Prize + "**\n"
-			}
-		}
-	}
-	return s
-}
-
 func paramsLottery(m *discordgo.MessageCreate) string {
 	var lottery Lottery
 	lottery.Tournaments = make(map[int64]Tournament)
 	var tour Tournament
 	data := strings.Fields(strings.TrimSpace(m.Content))
-	_, err := findLottery(data[2])
+	lotNum, err := getLotteryNumber(m.Content)
 	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибка поиска списка участников\n"
-	}
-	lotNum, err := strconv.ParseInt(data[2], 10, 64)
-	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибочно указан номер лотереи\n"
+		return err.Error()
 	}
 	// Ищем, есть ли уже параметры для этой лотереи
 	for k, v := range lotteries {
@@ -449,60 +471,26 @@ func paramsLottery(m *discordgo.MessageCreate) string {
 		lottery.Type = DrawLottery
 		return "Лотерея этого типа пока недоступна\n"
 	}
-	fmt.Printf("%+v\n", lotteries)
+	//fmt.Printf("%+v\n", lotteries)
 	return "Для лотереи №" + data[2] + " успешно заданы параметры розыгрыша\n"
 }
 
 func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 
 	// Получаем список участников лотереи по именам из переданного названия файла
-	data := strings.Fields(strings.TrimSpace(m.Content))
-	if len(data) < 3 {
-		return "Не указан номер лотереи\n"
-	}
-	lotteryNumber := strings.Fields(strings.TrimSpace(m.Content))[2]
-	lotNum, err := strconv.ParseInt(lotteryNumber, 10, 64)
+	fileName, err := getLotteryFile(m.Content)
 	if err != nil {
-		log.Print("Произошла ошибка: %s", err)
-		return "Ошибочно указан номер лотереи\n"
+		return err.Error()
 	}
-	fileName, err := findLottery(lotteryNumber)
+	lotNum, _ := getLotteryNumber(m.Content)
+	persons, err := getLotteryPersonsFromFile(fileName)
 	if err != nil {
-		log.Printf("Произошла ошибка: %s", err)
-		return "Лотерея с номером *" + lotteryNumber + "* не найдена. Проверьте название или посмотрите список доступных розыгрышей командой **list**\n"
+		return err.Error()
 	}
 
-	csvFile, err := os.Open(fileName)
+	memberNicks, err := getDGUsers(dg, m.GuildID)
 	if err != nil {
-		return "Ошибка открытия файла со списком участников гильдии\n"
-	}
-	reader := csv.NewReader(bufio.NewReader(csvFile))
-	var persons []string
-	for {
-		line, error := reader.Read()
-		if error == io.EOF {
-			break
-		} else if error != nil {
-			log.Fatal(error)
-		}
-		persons = append(persons, line[0])
-	}
-	csvFile.Close()
-
-	members, err := dg.GuildMembers(m.GuildID, "", 1000)
-	errCheck("Ошибка при получении списка участников гильдии: ", err)
-	var memberNicks []DgNick
-	nick := DgNick{}
-	for i := range members {
-		if !members[i].User.Bot {
-			if members[i].Nick != "" {
-				nick.Nick = members[i].Nick
-			} else {
-				nick.Nick = members[i].User.Username
-			}
-			nick.DgUser = members[i]
-			memberNicks = append(memberNicks, nick)
-		}
+		return err.Error()
 	}
 
 	rand.Seed(time.Now().UTC().UnixNano())
