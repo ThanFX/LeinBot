@@ -476,6 +476,10 @@ func paramsLottery(m *discordgo.MessageCreate) string {
 }
 
 func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
+	memberNicks, err := getDGUsers(dg, m.GuildID)
+	if err != nil {
+		return err.Error()
+	}
 
 	// Получаем список участников лотереи по именам из переданного названия файла
 	fileName, err := getLotteryFile(m.Content)
@@ -483,56 +487,50 @@ func startLottery(dg *discordgo.Session, m *discordgo.MessageCreate) string {
 		return err.Error()
 	}
 	lotNum, _ := getLotteryNumber(m.Content)
-	persons, err := getLotteryPersonsFromFile(fileName)
-	if err != nil {
-		return err.Error()
-	}
-
-	memberNicks, err := getDGUsers(dg, m.GuildID)
-	if err != nil {
-		return err.Error()
-	}
-
-	rand.Seed(time.Now().UTC().UnixNano())
-	maxTour := int64(len(lotteries[lotNum].Tournaments))
-	var curTour = maxTour
-	var winners []string
 	var s string
-	//fmt.Println(maxTour)
-	for curTour > 0 {
-		maxWin := lotteries[lotNum].Tournaments[curTour].Members
-		curWin := maxWin
-		for curWin > 0 {
-			winnerNum := rand.Intn(len(persons))
-			winners = append(winners, persons[winnerNum])
-			persons = append(persons[:winnerNum], persons[winnerNum+1:]...)
-			//fmt.Printf("Место - %d, победитель №%d\n", curTour, curWin)
-			//s += "Победил " + winners[len(winners)-1] + "\n"
-			curWin--
-		}
-		curTour--
-	}
 
-	curWinPhrases := make([]string, len(winPhrases))
-	copy(curWinPhrases, winPhrases)
-	var cwp string
-	for i := range winners {
-		for _, v := range memberNicks {
-			if strings.HasPrefix(v.Nick, winners[i]) {
-				if len(curWinPhrases) > 0 {
-					winPhraseNum := rand.Intn(len(curWinPhrases))
-					//fmt.Println(len(curWinPhrases))
-					//fmt.Println(winPhraseNum)
-					cwp = curWinPhrases[winPhraseNum]
-					//fmt.Println(cwp)
-					curWinPhrases = append(curWinPhrases[:winPhraseNum], curWinPhrases[winPhraseNum+1:]...)
-					//fmt.Println(curWinPhrases)
-				} else {
-					cwp = ""
+	switch lotteries[lotNum].Type {
+	case TournamentLottery:
+		persons, err := getLotteryPersonsFromFile(fileName)
+		if err != nil {
+			return err.Error()
+		}
+
+		rand.Seed(time.Now().UTC().UnixNano())
+		maxTour := int64(len(lotteries[lotNum].Tournaments))
+		var curTour = maxTour
+		var winners []string
+		for curTour > 0 {
+			maxWin := lotteries[lotNum].Tournaments[curTour].Members
+			curWin := maxWin
+			for curWin > 0 {
+				winnerNum := rand.Intn(len(persons))
+				winners = append(winners, persons[winnerNum])
+				persons = append(persons[:winnerNum], persons[winnerNum+1:]...)
+				curWin--
+			}
+			curTour--
+		}
+
+		curWinPhrases := make([]string, len(winPhrases))
+		copy(curWinPhrases, winPhrases)
+		var cwp string
+		for i := range winners {
+			for _, v := range memberNicks {
+				if strings.HasPrefix(v.Nick, winners[i]) {
+					if len(curWinPhrases) > 0 {
+						winPhraseNum := rand.Intn(len(curWinPhrases))
+						cwp = curWinPhrases[winPhraseNum]
+						curWinPhrases = append(curWinPhrases[:winPhraseNum], curWinPhrases[winPhraseNum+1:]...)
+					} else {
+						cwp = ""
+					}
+					s += "Победитель " + v.DgUser.Mention() + " " + cwp + "\n\n"
 				}
-				s += "Победитель " + v.DgUser.Mention() + " " + cwp + "\n\n"
 			}
 		}
+
+	case DrawLottery:
 	}
 	return s
 }
